@@ -1,3 +1,6 @@
+# Voyager (Autobrowser)
+A fork of voyager aimed at implementing general purpose web browsing and Node JS code execution capabilities using the Voyager architecture.
+
 # Voyager: An Open-Ended Embodied Agent with Large Language Models
 <div align="center">
 
