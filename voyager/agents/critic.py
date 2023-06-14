@@ -1,16 +1,17 @@
+from typing import List
 from voyager.prompts import load_prompt
 from voyager.utils.json_utils import fix_and_parse_json
 from langchain.chat_models import ChatOpenAI
 from langchain.schema import HumanMessage, SystemMessage
-
+from ..types import BrowserEvent
 
 class CriticAgent:
     def __init__(
         self,
-        model_name="gpt-3.5-turbo",
-        temperature=0,
-        request_timout=120,
-        mode="auto",
+        model_name: str = "gpt-3.5-turbo",
+        temperature: float = 0,
+        request_timout: int = 120,
+        mode: str = "auto",
     ):
         self.llm = ChatOpenAI(
             model_name=model_name,
@@ -24,47 +25,35 @@ class CriticAgent:
         system_message = SystemMessage(content=load_prompt("critic"))
         return system_message
 
-    def render_human_message(self, *, events, task, context, chest_observation):
-        assert events[-1][0] == "observe", "Last event must be observe"
-        biome = events[-1][1]["status"]["biome"]
-        time_of_day = events[-1][1]["status"]["timeOfDay"]
-        voxels = events[-1][1]["voxels"]
-        health = events[-1][1]["status"]["health"]
-        hunger = events[-1][1]["status"]["food"]
-        position = events[-1][1]["status"]["position"]
-        equipment = events[-1][1]["status"]["equipment"]
-        inventory_used = events[-1][1]["status"]["inventoryUsed"]
-        inventory = events[-1][1]["inventory"]
+    def render_human_message(self, *, events: List[BrowserEvent], task, context):
 
-        for i, (event_type, event) in enumerate(events):
-            if event_type == "onError":
-                print(f"\033[31mCritic Agent: Error occurs {event['onError']}\033[0m")
+        if not events[-1]["log"] == "observe":
+            raise ValueError("Last event must be an observe event")
+
+        event = events[-1]
+        current_url = event["currentUrl"]
+        workspace = event["workspace"]
+        clickables = event["clickables"]
+        text = event["text"]
+
+
+        for i, (event) in enumerate(events):
+            if event["log"] == "error":
+                print(f"\033[31mCritic Agent: Error occurs {event['error']}\033[0m")
                 return None
 
         observation = ""
 
-        observation += f"Biome: {biome}\n\n"
+        if not current_url or not workspace or not clickables or not text:
+            raise ValueError("Missing required fields")
+        
+        observation += f"URL: {current_url}\n\n"
 
-        observation += f"Time: {time_of_day}\n\n"
+        observation += f"Workspace: {workspace}\n\n"
 
-        if voxels:
-            observation += f"Nearby blocks: {', '.join(voxels)}\n\n"
-        else:
-            observation += f"Nearby blocks: None\n\n"
+        observation += f"Clickables: {clickables}\n\n"
 
-        observation += f"Health: {health:.1f}/20\n\n"
-        observation += f"Hunger: {hunger:.1f}/20\n\n"
-
-        observation += f"Position: x={position['x']:.1f}, y={position['y']:.1f}, z={position['z']:.1f}\n\n"
-
-        observation += f"Equipment: {equipment}\n\n"
-
-        if inventory:
-            observation += f"Inventory ({inventory_used}/36): {inventory}\n\n"
-        else:
-            observation += f"Inventory ({inventory_used}/36): Empty\n\n"
-
-        observation += chest_observation
+        observation += f"Text: {text}\n\n"
 
         observation += f"Task: {task}\n\n"
 
@@ -114,13 +103,12 @@ class CriticAgent:
             )
 
     def check_task_success(
-        self, *, events, task, context, chest_observation, max_retries=5
+        self, *, events, task, context, max_retries=5
     ):
         human_message = self.render_human_message(
             events=events,
             task=task,
             context=context,
-            chest_observation=chest_observation,
         )
 
         messages = [

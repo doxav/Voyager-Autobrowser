@@ -1,6 +1,7 @@
-import express from "express";
-import puppeteer from "puppeteer";
-import fs from "fs";
+const express = require("express");
+const puppeteer = require("puppeteer");
+const fs = require("fs");
+const path = require("path");
 
 let page;
 let browser;
@@ -21,23 +22,23 @@ const defaultClickables = [
   "HTMLInputElement",
   "HTMLTextAreaElement",
   "HTMLLabelElement",
-  "HTMLFieldSetElement",
-  "HTMLLegendElement",
-  "HTMLOptGroupElement",
+  // "HTMLFieldSetElement",
+  // "HTMLLegendElement",
+  // "HTMLOptGroupElement",
   "HTMLOptionElement",
-  "HTMLDataListElement",
-  "HTMLMeterElement",
-  "HTMLProgressElement",
+  // "HTMLDataListElement",
+  // "HTMLMeterElement",
+  // "HTMLProgressElement",
   "HTMLSelectElement",
-  "HTMLDetailsElement",
-  "HTMLDialogElement",
-  "HTMLMenuElement",
-  "HTMLMenuItemElement",
-  "HTMLSummaryElement",
-  "HTMLTrackElement",
-  "HTMLVideoElement",
-  "HTMLAudioElement",
-  "HTMLSourceElement",
+  // "HTMLDetailsElement",
+  // "HTMLDialogElement",
+  // "HTMLMenuElement",
+  // "HTMLMenuItemElement",
+  // "HTMLSummaryElement",
+  // "HTMLTrackElement",
+  // "HTMLVideoElement",
+  // "HTMLAudioElement",
+  // "HTMLSourceElement",
 ];
 
 async function getClickableElements() {
@@ -72,22 +73,66 @@ async function getClickableElements() {
     if (defaultClickables.includes(descriptor.value.className)) {
       isClickable = true;
     } else {
-      const { listeners } = await session.send(
-        "DOMDebugger.getEventListeners",
-        {
-          objectId,
-        }
-      );
-      if (
-        listeners.some((l) =>
-          ["click", "mousedown", "mouseup"].includes(l.type)
-        )
-      ) {
-        isClickable = true;
-      }
+      // const { listeners } = await session.send(
+      //   "DOMDebugger.getEventListeners",
+      //   {
+      //     objectId,
+      //   }
+      // );
+      // if (
+      //   listeners.some((l) =>
+      //     ["click", "mousedown", "mouseup"].includes(l.type)
+      //   )
+      // ) {
+      //   isClickable = true;
+      // }
     }
 
     if (isClickable && !elements.find((e) => e.id === descriptor.name)) {
+      const { result: uniqueSelector } = await session.send(
+        "Runtime.callFunctionOn",
+        {
+          objectId,
+          functionDeclaration: `
+          function() {
+            let element = this;
+            let selectorParts = [];
+
+            while (element && element.nodeType === Node.ELEMENT_NODE) {
+              let part = element.tagName.toLowerCase();
+              let isUnique = false;
+
+              if (element.id) {
+                part += '#' + element.id;
+                isUnique = true;
+              }
+
+              let className = (element.className || '').trim();
+              if (className && !isUnique) {
+                part += '.' + className.replace(/\s+/g, '.');
+              }
+
+              let siblings = Array.from(element.parentNode.childNodes);
+              let similarSiblings = siblings.filter(
+                (node) => node.nodeType === Node.ELEMENT_NODE && node.tagName === element.tagName
+              );
+
+              if (similarSiblings.length > 1) {
+                let index = similarSiblings.indexOf(element);
+                part += ':nth-child(' + (index + 1) + ')';
+              }
+
+              selectorParts.unshift(part);
+              element = element.parentNode;
+            }
+
+            return selectorParts.join(' > ');
+          }
+        `,
+          returnByValue: true,
+          objectGroup,
+        }
+      );
       const { result: text } = await session.send("Runtime.callFunctionOn", {
         objectId,
         functionDeclaration: "function() { return this.innerText }",
@@ -98,17 +143,26 @@ async function getClickableElements() {
         "Runtime.callFunctionOn",
         {
           objectId,
-          functionDeclaration:
-            "function() { const obj = {}; for (const attr of this.attributes) { obj[attr.name] = attr.value }; return obj; }",
+          functionDeclaration: `function() {
+            const obj = {};
+              for (const attr of this.attributes) {
+                if (attr.name === "name" || attr.name === "id" || attr.name.includes("role") || attr.name === "aria-label" || attr.name === "value") {
+                  obj[attr.name] = attr.value;
+                }
+              }
+              return obj;
+            }
+          `,
           returnByValue: true,
           objectGroup,
         }
       );
       elements.push({
-        id: descriptor.name,
-        type: descriptor.value.className,
+        // id: descriptor.name,
+        // type: descriptor.value.className,
         text: text.value,
         attributes: attributes.value,
+        selector: uniqueSelector.value,
       });
     }
   }
@@ -117,27 +171,8 @@ async function getClickableElements() {
   return elements;
 }
 
-function writeFile(filename, content) {
-  fs.writeFileSync(`./workspace/${filename}`, content, (err) => {
-    if (err) {
-      console.error(err);
-      return;
-    }
-    console.log("Written", filename);
-  });
-}
-
-function readFile(filename) {
-  fs.readFileSync(`./workspace/${filename}`, (err, data) => {
-    if (err) {
-      console.error(err);
-      return;
-    }
-  });
-}
-
 async function recordEvent(log, error) {
-  const workspace = fs.readdirSync("./workspace");
+  const workspace = fs.readdirSync(path.join(__dirname, "./workspace"));
   const event = {
     log,
     workspace,
@@ -152,7 +187,8 @@ async function recordEvent(log, error) {
 
 async function init() {
   browser = await puppeteer.launch({
-    headless: true,
+    headless: false,
+    args: ['--lang=en-US,en']
   });
   page = await browser.newPage();
   await page.goto("https://www.example.com");
@@ -167,19 +203,25 @@ app.use(express.json());
 // curl -X POST -H "Content-Type: application/json" -d '{"code": "async function exampleFunction() {await page.goto(`https://www.google.com`); await recordEvent(`Navigated to Google`);}" }' http://localhost:3000/execute
 
 app.post("/execute", async (req, res) => {
-  const { code } = req.body;
   try {
-    console.log("Executing", code);
-    await eval(`(${code})()`);
+    const { code, programs } = req.body;
+    if (code && programs) {
+      await eval(
+        `${programs.replace(/(\r\n|\n|\r)/gm, "")};(async () => {${code.replace(
+          /(\r\n|\n|\r)/gm,
+          ""
+        )}})()`
+      );
+    }
     await recordEvent("observe");
   } catch (e) {
     console.error(e);
-    await recordEvent("observe", e);
+    await recordEvent("error", e);
   }
 
   res.json({ events: eventsCache });
   fs.writeFileSync(
-    "./workspace/events.json",
+    path.join(__dirname, "./workspace/events.json"),
     JSON.stringify(eventsCache, null, 2)
   );
   eventsCache = [];

@@ -13,12 +13,12 @@ from voyager.control_primitives import load_control_primitives
 class SkillManager:
     def __init__(
         self,
-        model_name="gpt-3.5-turbo",
-        temperature=0,
-        retrieval_top_k=5,
-        request_timout=120,
-        ckpt_dir="ckpt",
-        resume=False,
+        model_name: str = "gpt-3.5-turbo",
+        temperature: float = 0,
+        retrieval_top_k: int = 5,
+        request_timout: int = 120,
+        ckpt_dir: str = "ckpt",
+        resume: bool = False,
     ):
         self.llm = ChatOpenAI(
             model_name=model_name,
@@ -59,9 +59,6 @@ class SkillManager:
         return programs
 
     def add_new_skill(self, info):
-        if info["task"].startswith("Deposit useless items into the chest at"):
-            # No need to reuse the deposit skill
-            return
         program_name = info["program_name"]
         program_code = info["program_code"]
         skill_description = self.generate_skill_description(program_name, program_code)
@@ -109,7 +106,7 @@ class SkillManager:
             ),
         ]
         skill_description = f"    // { self.llm(messages).content}"
-        return f"async function {program_name}(bot) {{\n{skill_description}\n}}"
+        return f"async function {program_name}() {{\n{skill_description}\n}}"
 
     def retrieve_skills(self, query):
         k = min(self.vectordb._collection.count(), self.retrieval_top_k)
